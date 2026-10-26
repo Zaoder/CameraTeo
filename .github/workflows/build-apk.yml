@@ -10,23 +10,23 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - uses: android-actions/setup-android@v3
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
       - name: Build APK
-        run: gradle assembleDebug --no-daemon
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle assembleDebug --no-daemon
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk Kinisi.apk
@@ -36,7 +36,7 @@ jobs:
           name: Kinisi-apk
           path: Kinisi.apk
 
-      - name: Publish release (direct download for the phone)
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
