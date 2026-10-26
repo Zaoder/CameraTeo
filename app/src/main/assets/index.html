@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ανιχνευτής Κίνησης</title>
+<style>
+:root{
+  --bg:#0d1117;--panel:#161b22;--line:#2a313c;--text:#e6edf3;--muted:#8b949e;
+  --accent:#3fb950;--warn:#f0883e;--danger:#f85149;--blue:#58a6ff;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{padding:12px 12px calc(12px + env(safe-area-inset-bottom))}
+h1{font-size:17px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+.dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.dot.alarm{background:var(--danger);box-shadow:0 0 10px var(--danger)}
+.stage{position:relative;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.stage video{display:block;width:100%;height:auto}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+.placeholder{padding:48px 16px;text-align:center;color:var(--muted)}
+.meter{height:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px;position:relative;margin:10px 0 4px;overflow:hidden}
+.meter .fill{height:100%;width:0;background:var(--accent);transition:width .1s}
+.meter .thr{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn)}
+.status{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+button{flex:1;min-width:90px;padding:12px 10px;border-radius:9px;border:1px solid var(--line);
+  background:var(--panel);color:var(--text);font:inherit;font-weight:600}
+button.primary{background:var(--accent);color:#04120a;border-color:var(--accent)}
+button.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+button.sel{outline:2px solid var(--blue);outline-offset:-2px}
+button:disabled{opacity:.45}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:12px}
+.card h2{font-size:14px;margin:0 0 8px;color:var(--muted);font-weight:600}
+label{display:block;font-size:14px;margin-top:8px}
+label span{float:right;color:var(--blue);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;margin:6px 0 2px}
+.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+.log{list-style:none;padding:0;margin:0}
+.log li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.log li:first-child{border-top:0}
+.log img{width:96px;border-radius:6px;border:1px solid var(--line)}
+.log time{font-weight:600;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:13px}
+#alarmLayer{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+  gap:18px;background:rgba(248,81,73,.92);z-index:10;padding:24px;text-align:center}
+#alarmLayer.show{display:flex;animation:flash .6s steps(2) infinite}
+#alarmLayer b{font-size:30px;color:#fff}
+#alarmLayer small{color:#fff;font-size:15px}
+#alarmLayer button{flex:none;width:min(320px,90%);padding:20px;font-size:20px;background:#fff;color:#b62324;border:0}
+@keyframes flash{50%{background:rgba(120,10,10,.95)}}
+.toggle{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14px}
+.toggle input{width:20px;height:20px}
+</style>
+</head>
+<body>
+<h1><i class="dot" id="dot"></i><span id="title">Ανιχνευτής Κίνησης</span></h1>
+
+<div class="stage" id="stage">
+  <div class="placeholder" id="ph">Πάτα «Έναρξη κάμερας» και στρέψε την πίσω κάμερα στην οθόνη των καμερών.</div>
+  <video id="video" playsinline muted autoplay hidden></video>
+  <canvas id="overlay" hidden></canvas>
+</div>
+
+<div class="meter"><div class="fill" id="fill"></div><div class="thr" id="thrMark"></div></div>
+<div class="status"><span id="stateTxt">Ανενεργό</span><span id="pctTxt">0.0%</span></div>
+
+<div class="row">
+  <button class="primary" id="btnCam">Έναρξη κάμερας</button>
+  <button id="btnSwitch" disabled>Αλλαγή κάμερας</button>
+</div>
+<div class="row">
+  <button id="btnArm" disabled>Οπλισμός</button>
+  <button id="btnTest">Δοκιμή ήχου</button>
+</div>
+
+<div class="card">
+  <h2>Ζώνες</h2>
+  <div class="row" style="margin-top:0">
+    <button id="mInc">+ Ζώνη ελέγχου</button>
+    <button id="mExc">+ Εξαίρεση</button>
+  </div>
+  <div class="row">
+    <button id="mOff">Τέλος σχεδίασης</button>
+    <button id="btnClear">Διαγραφή όλων</button>
+  </div>
+  <div class="hint">Σύρε το δάχτυλο πάνω στην εικόνα για να σχεδιάσεις ορθογώνιο. Πράσινο = ελέγχεται. Κόκκινο = αγνοείται (π.χ. το ρολόι της οθόνης). Χωρίς πράσινες ζώνες ελέγχεται όλη η εικόνα.</div>
+</div>
+
+<div class="card">
+  <h2>Ευαισθησία</h2>
+  <label>Ευαισθησία σημείου <span id="vPix"></span>
+    <input type="range" id="sPix" min="1" max="10" step="1"></label>
+  <div class="hint">Πιο ψηλά = πιάνει πιο αχνές αλλαγές (αλλά και θόρυβο της οθόνης).</div>
+  <label>Ελάχιστη έκταση κίνησης <span id="vArea"></span>
+    <input type="range" id="sArea" min="0.2" max="15" step="0.1"></label>
+  <div class="hint">Τι ποσοστό της ζώνης πρέπει να αλλάξει για συναγερμό. Η πορτοκαλί γραμμή στη μπάρα δείχνει το όριο.</div>
+  <label>Διάρκεια επιβεβαίωσης <span id="vHold"></span>
+    <input type="range" id="sHold" min="1" max="15" step="1"></label>
+  <div class="hint">Πόσα συνεχόμενα καρέ (×0,1 δευτ.) πρέπει να δείχνουν κίνηση. Μεγαλύτερο = λιγότεροι ψεύτικοι συναγερμοί.</div>
+  <div class="toggle"><input type="checkbox" id="cShow"><label for="cShow" style="margin:0">Δείξε τα σημεία που αλλάζουν</label></div>
+  <div class="toggle"><input type="checkbox" id="cVib"><label for="cVib" style="margin:0">Δόνηση μαζί με τον ήχο</label></div>
+</div>
+
+<div class="card">
+  <h2>Συμβάντα</h2>
+  <ul class="log" id="log"><li class="empty">Κανένα συμβάν ακόμη.</li></ul>
+</div>
+
+<div id="alarmLayer">
+  <b>ΚΙΝΗΣΗ!</b>
+  <small id="alarmInfo"></small>
+  <button id="btnAck">ΣΙΓΑΣΗ</button>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
+const work = document.createElement("canvas"), wctx = work.getContext("2d", { willReadFrequently: true });
+
+/* ---------- ρυθμίσεις ---------- */
+const DEF = { level: 6, area: 1.5, hold: 3, show: true, vib: true, zones: [] };
+let cfg = Object.assign({}, DEF);
+try { const s = JSON.parse(localStorage.getItem("kinisi.cfg") || "null"); if (s) cfg = Object.assign(cfg, s); } catch (e) {}
+const save = () => { try { localStorage.setItem("kinisi.cfg", JSON.stringify(cfg)); } catch (e) {} };
+// επίπεδο 1..10 -> κατώφλι διαφοράς φωτεινότητας ανά σημείο (μικρότερο = πιο ευαίσθητο)
+const pixThr = () => 62 - cfg.level * 5;
+
+/* ---------- κατάσταση ---------- */
+let stream = null, devices = [], devIdx = -1;
+let W = 160, H = 120, bg = null, mask = null, maskCount = 0, changedMap = null;
+let armed = false, armedAt = 0, hits = 0, alarming = false, cooldownUntil = 0;
+let loopTimer = null, wakeLock = null, events = [];
+let drawMode = null, drag = null;
+
+/* ---------- ήχος ---------- */
+let actx = null, sirenOsc = null, sirenGain = null, sirenTimer = null;
+function audio() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === "suspended") actx.resume();
+  return actx;
+}
+function sirenStart() {
+  const a = audio();
+  if (sirenOsc) return;
+  sirenGain = a.createGain(); sirenGain.gain.value = 0.9; sirenGain.connect(a.destination);
+  sirenOsc = a.createOscillator(); sirenOsc.type = "square"; sirenOsc.frequency.value = 880;
+  sirenOsc.connect(sirenGain); sirenOsc.start();
+  let hi = true;
+  sirenTimer = setInterval(() => {
+    hi = !hi;
+    sirenOsc.frequency.setValueAtTime(hi ? 880 : 620, a.currentTime);
+    if (cfg.vib && navigator.vibrate) navigator.vibrate(350);
+  }, 400);
+}
+function sirenStop() {
+  clearInterval(sirenTimer); sirenTimer = null;
+  if (sirenOsc) { try { sirenOsc.stop(); } catch (e) {} sirenOsc.disconnect(); sirenGain.disconnect(); }
+  sirenOsc = sirenGain = null;
+  if (navigator.vibrate) navigator.vibrate(0);
+}
+
+/* ---------- κάμερα ---------- */
+async function startCamera() {
+  audio(); // ξεκλείδωμα ήχου με το πάτημα
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showMsg("Η συσκευή δεν δίνει πρόσβαση σε κάμερα από εδώ."); return;
+  }
+  stopCamera();
+  const v = devIdx >= 0 && devices[devIdx]
+    ? { deviceId: { exact: devices[devIdx].deviceId } }
+    : { facingMode: { ideal: "environment" } };
+  v.width = { ideal: 1280 }; v.height = { ideal: 720 };
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+  } catch (e) {
+    showMsg("Δεν δόθηκε πρόσβαση στην κάμερα (" + (e.name || e) + "). Έλεγξε τις άδειες της εφαρμογής.");
+    return;
+  }
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  await new Promise(r => video.videoWidth ? r() : video.addEventListener("loadedmetadata", r, { once: true }));
+  $("ph").hidden = true; video.hidden = false; overlay.hidden = false;
+  try {
+    devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    const cur = stream.getVideoTracks()[0].getSettings().deviceId;
+    devIdx = Math.max(0, devices.findIndex(d => d.deviceId === cur));
+  } catch (e) {}
+  $("btnSwitch").disabled = devices.length < 2;
+  $("btnArm").disabled = false;
+  $("btnCam").textContent = "Επανεκκίνηση";
+  W = 160; H = Math.max(60, Math.round(W * video.videoHeight / video.videoWidth));
+  work.width = W; work.height = H;
+  bg = null; buildMask(); sizeOverlay();
+  keepAwake();
+  clearInterval(loopTimer); loopTimer = setInterval(tick, 100);
+}
+function stopCamera() {
+  clearInterval(loopTimer); loopTimer = null;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+}
+function showMsg(t) { $("ph").textContent = t; $("ph").hidden = false; video.hidden = true; overlay.hidden = true; }
+
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && !wakeLock) {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && stream) keepAwake(); });
+
+/* ---------- ζώνες ---------- */
+function buildMask() {
+  mask = new Uint8Array(W * H); changedMap = new Uint8Array(W * H);
+  const inc = cfg.zones.filter(z => z.t === "i"), exc = cfg.zones.filter(z => z.t === "e");
+  const inside = (z, x, y) => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h;
+  maskCount = 0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const nx = (x + .5) / W, ny = (y + .5) / H;
+    let on = inc.length ? inc.some(z => inside(z, nx, ny)) : true;
+    if (on && exc.some(z => inside(z, nx, ny))) on = false;
+    mask[y * W + x] = on ? 1 : 0; if (on) maskCount++;
+  }
+  bg = null; hits = 0;
+}
+function sizeOverlay() {
+  const r = overlay.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  overlay.width = Math.round(r.width * d); overlay.height = Math.round(r.height * d);
+}
+window.addEventListener("resize", () => { if (!overlay.hidden) sizeOverlay(); });
+
+function drawOverlay() {
+  const cw = overlay.width, ch = overlay.height;
+  octx.clearRect(0, 0, cw, ch);
+  if (cfg.show && changedMap) {
+    octx.fillStyle = "rgba(248,81,73,.75)";
+    const sx = cw / W, sy = ch / H;
+    for (let i = 0; i < changedMap.length; i++) if (changedMap[i])
+      octx.fillRect((i % W) * sx, ((i / W) | 0) * sy, Math.ceil(sx), Math.ceil(sy));
+  }
+  const all = drag ? cfg.zones.concat([drag]) : cfg.zones;
+  octx.lineWidth = Math.max(2, cw / 200);
+  for (const z of all) {
+    const c = z.t === "i" ? "63,185,80" : "248,81,73";
+    octx.fillStyle = `rgba(${c},.15)`; octx.strokeStyle = `rgb(${c})`;
+    octx.fillRect(z.x * cw, z.y * ch, z.w * cw, z.h * ch);
+    octx.strokeRect(z.x * cw, z.y * ch, z.w * cw, z.h * ch);
+  }
+}
+function pt(e) {
+  const r = overlay.getBoundingClientRect();
+  return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+           y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+}
+overlay.addEventListener("pointerdown", e => {
+  if (!drawMode) return;
+  overlay.setPointerCapture(e.pointerId);
+  const p = pt(e); drag = { t: drawMode, x: p.x, y: p.y, w: 0, h: 0, ox: p.x, oy: p.y };
+});
+overlay.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const p = pt(e);
+  drag.x = Math.min(p.x, drag.ox); drag.y = Math.min(p.y, drag.oy);
+  drag.w = Math.abs(p.x - drag.ox); drag.h = Math.abs(p.y - drag.oy);
+  drawOverlay();
+});
+const endDrag = () => {
+  if (!drag) return;
+  if (drag.w > .02 && drag.h > .02) {
+    cfg.zones.push({ t: drag.t, x: drag.x, y: drag.y, w: drag.w, h: drag.h });
+    save(); buildMask();
+  }
+  drag = null; drawOverlay();
+};
+overlay.addEventListener("pointerup", endDrag);
+overlay.addEventListener("pointercancel", endDrag);
+
+function setMode(m) {
+  drawMode = m;
+  $("mInc").classList.toggle("sel", m === "i");
+  $("mExc").classList.toggle("sel", m === "e");
+  overlay.style.cursor = m ? "crosshair" : "default";
+}
+$("mInc").onclick = () => setMode("i");
+$("mExc").onclick = () => setMode("e");
+$("mOff").onclick = () => setMode(null);
+$("btnClear").onclick = () => {
+  if (!cfg.zones.length || !confirm("Διαγραφή όλων των ζωνών;")) return;
+  cfg.zones = []; save(); buildMask(); drawOverlay();
+};
+
+/* ---------- ανίχνευση ---------- */
+function tick() {
+  if (!video.videoWidth || video.readyState < 2) return;
+  wctx.drawImage(video, 0, 0, W, H);
+  const px = wctx.getImageData(0, 0, W, H).data;
+  const n = W * H, cur = new Float32Array(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) cur[i] = (px[j] * 77 + px[j + 1] * 150 + px[j + 2] * 29) / 256;
+  if (!bg) { bg = cur; changedMap.fill(0); drawOverlay(); return; }
+
+  // αντιστάθμιση γενικής αλλαγής φωτεινότητας (αυτόματη έκθεση κάμερας / φωτισμός)
+  let sc = 0, sb = 0;
+  for (let i = 0; i < n; i++) if (mask[i]) { sc += cur[i]; sb += bg[i]; }
+  const off = maskCount ? (sc - sb) / maskCount : 0;
+
+  const thr = pixThr(); let changed = 0;
+  for (let i = 0; i < n; i++) {
+    const c = mask[i] && Math.abs(cur[i] - bg[i] - off) > thr ? 1 : 0;
+    changedMap[i] = c; changed += c;
+  }
+  // απομάκρυνση μεμονωμένων σημείων (θόρυβος / τρεμόπαιγμα)
+  let clean = 0;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x; if (!changedMap[i]) continue;
+    const nb = changedMap[i - 1] + changedMap[i + 1] + changedMap[i - W] + changedMap[i + W];
+    if (nb >= 2) clean++;
+  }
+  const pct = maskCount ? clean / maskCount * 100 : 0;
+
+  // σταδιακή ενημέρωση φόντου
+  const a = 0.06;
+  for (let i = 0; i < n; i++) bg[i] += (cur[i] - off - bg[i]) * a;
+
+  updateMeter(pct);
+  drawOverlay();
+
+  const now = Date.now();
+  if (!armed || alarming || now < cooldownUntil) { hits = 0; return; }
+  if (now - armedAt < 3000) { setState("Οπλίζεται…"); hits = 0; return; }
+  setState("Οπλισμένο — παρακολουθεί");
+  hits = pct >= cfg.area ? hits + 1 : 0;
+  if (hits >= cfg.hold) trigger(pct);
+}
+
+function updateMeter(pct) {
+  const max = Math.max(cfg.area * 3, 5);
+  $("fill").style.width = Math.min(100, pct / max * 100) + "%";
+  $("fill").style.background = pct >= cfg.area ? "var(--danger)" : "var(--accent)";
+  $("thrMark").style.left = Math.min(100, cfg.area / max * 100) + "%";
+  $("pctTxt").textContent = pct.toFixed(1) + "%";
+}
+function setState(t) { $("stateTxt").textContent = t; }
+
+function trigger(pct) {
+  alarming = true; hits = 0;
+  const t = new Date();
+  let img = "";
+  try {
+    const s = document.createElement("canvas"); s.width = 320;
+    s.height = Math.round(320 * video.videoHeight / video.videoWidth);
+    s.getContext("2d").drawImage(video, 0, 0, s.width, s.height);
+    img = s.toDataURL("image/jpeg", .7);
+  } catch (e) {}
+  events.unshift({ t, pct, img }); if (events.length > 30) events.pop();
+  renderLog();
+  $("alarmInfo").textContent = t.toLocaleTimeString("el-GR") + " · " + pct.toFixed(1) + "% της ζώνης";
+  $("alarmLayer").classList.add("show");
+  $("dot").className = "dot alarm";
+  setState("ΣΥΝΑΓΕΡΜΟΣ");
+  sirenStart();
+}
+$("btnAck").onclick = () => {
+  sirenStop(); alarming = false; cooldownUntil = Date.now() + 5000; bg = null;
+  $("alarmLayer").classList.remove("show");
+  $("dot").className = armed ? "dot on" : "dot";
+  setState(armed ? "Οπλισμένο — παύση 5″" : "Ανενεργό");
+};
+
+function renderLog() {
+  const ul = $("log"); ul.innerHTML = "";
+  if (!events.length) { ul.innerHTML = '<li class="empty">Κανένα συμβάν ακόμη.</li>'; return; }
+  for (const ev of events) {
+    const li = document.createElement("li");
+    if (ev.img) { const im = new Image(); im.src = ev.img; im.alt = ""; li.appendChild(im); }
+    const d = document.createElement("div");
+    const tm = document.createElement("time"); tm.textContent = ev.t.toLocaleTimeString("el-GR");
+    const sm = document.createElement("div"); sm.className = "hint"; sm.style.marginTop = "2px";
+    sm.textContent = ev.t.toLocaleDateString("el-GR") + " · " + ev.pct.toFixed(1) + "%";
+    d.append(tm, sm); li.appendChild(d); ul.appendChild(li);
+  }
+}
+
+/* ---------- κουμπιά ---------- */
+$("btnCam").onclick = startCamera;
+$("btnSwitch").onclick = () => { if (devices.length > 1) { devIdx = (devIdx + 1) % devices.length; startCamera(); } };
+$("btnArm").onclick = () => {
+  armed = !armed; audio();
+  if (armed) { armedAt = Date.now(); bg = null; setMode(null); }
+  $("btnArm").textContent = armed ? "Αφόπλιση" : "Οπλισμός";
+  $("btnArm").className = armed ? "danger" : "";
+  $("dot").className = armed ? "dot on" : "dot";
+  setState(armed ? "Οπλίζεται…" : "Ανενεργό");
+};
+$("btnTest").onclick = () => {
+  if (sirenOsc) { sirenStop(); $("btnTest").textContent = "Δοκιμή ήχου"; return; }
+  sirenStart(); $("btnTest").textContent = "Σταμάτα";
+  setTimeout(() => { if (!alarming && sirenOsc) { sirenStop(); $("btnTest").textContent = "Δοκιμή ήχου"; } }, 2500);
+};
+
+function bindRange(id, key, fmt) {
+  const el = $(id), out = $(id.replace("s", "v"));
+  el.value = cfg[key]; out.textContent = fmt(cfg[key]);
+  el.oninput = () => { cfg[key] = +el.value; out.textContent = fmt(cfg[key]); save(); updateMeter(0); };
+}
+bindRange("sPix", "level", v => v + "/10");
+bindRange("sArea", "area", v => v.toFixed(1) + "%");
+bindRange("sHold", "hold", v => (v / 10).toFixed(1) + " δευτ.");
+$("cShow").checked = cfg.show; $("cShow").onchange = e => { cfg.show = e.target.checked; save(); drawOverlay(); };
+$("cVib").checked = cfg.vib; $("cVib").onchange = e => { cfg.vib = e.target.checked; save(); };
+updateMeter(0);
+})();
+</script>
+</body>
+</html>
